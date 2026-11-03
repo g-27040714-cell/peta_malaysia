@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jelajah Malaysia – Finger Gesture Puzzle</title>
+    <!-- Tailwind CSS for Responsive Layout & Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Fredoka & Montserrat -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Montserrat:wght@500;700;900&display=swap" rel="stylesheet">
+    <!-- MediaPipe Libraries for Vision & Hand Tracking -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Fredoka', 'Montserrat', sans-serif;
+            background: linear-gradient(135deg, #003399 0%, #001f66 60%, #cc0000 100%);
+            color: #333;
+            overflow-x: hidden;
+            touch-action: none;
+        }
+
+        /* Glassmorphic Cards */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(10px);
+            border: 3px solid #ffcc00;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+        }
+
+        .glass-dark {
+            background: rgba(0, 26, 77, 0.85);
+            backdrop-filter: blur(8px);
+            border: 2px solid rgba(255, 204, 0, 0.5);
+        }
+
+        /* Custom Hand Cursor Pointer */
+        #hand-cursor {
+            position: fixed;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255, 204, 0, 0.7);
+            border: 3px solid #cc0000;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            transition: width 0.1s, height 0.1s, background-color 0.1s;
+            box-shadow: 0 0 15px #ffcc00;
+        }
+
+        #hand-cursor.pinched {
+            width: 22px;
+            height: 22px;
+            background: #cc0000;
+            border-color: #ffffff;
+            box-shadow: 0 0 20px #ff0000;
+        }
+
+        /* Interactive SVG Map Hover & Highlights */
+        .state-path {
+            fill: #e2e8f0;
+            stroke: #1e293b;
+            stroke-width: 1.5;
+            transition: all 0.25s ease;
+            cursor: pointer;
+        }
+
+        .state-path:hover, .state-path.gesture-hover {
+            fill: #fef08a;
+            stroke: #d97706;
+            stroke-width: 2.5;
+            filter: drop-shadow(0 0 6px rgba(234, 179, 8, 0.8));
+        }
+
+        .state-path.matched {
+            fill: #4ade80 !important;
+            stroke: #15803d !important;
+            stroke-width: 2;
+        }
+
+        /* Puzzle Cards styling */
+        .puzzle-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+            border: 2px solid #003399;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+            user-select: none;
+        }
+
+        .puzzle-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        }
+
+        .puzzle-card.selected {
+            border-color: #cc0000;
+            background: #fef2f2;
+            box-shadow: 0 0 0 4px rgba(204, 0, 0, 0.3);
+        }
+
+        .puzzle-card.placed {
+            opacity: 0.4;
+            pointer-events: none;
+            filter: grayscale(1);
+        }
+
+        /* Pulse & Bounce Animations */
+        @keyframes customPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .animate-pulse-custom {
+            animation: customPulse 2s infinite ease-in-out;
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #ffcc00;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="min-h-screen text-slate-800 flex flex-col justify-between relative selection:bg-yellow-400">
+
+    <!-- FINGER CURSOR OVERLAY -->
+    <div id="hand-cursor" class="hidden"></div>
+
+    <!-- TOAST / NOTIFICATION POPUP -->
+    <div id="toast" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-white font-bold text-lg shadow-2xl transition-all duration-300 opacity-0 pointer-events-none transform -translate-y-10 flex items-center gap-3">
+        <i id="toast-icon" class="fas fa-info-circle text-2xl"></i>
+        <span id="toast-message">Mesej Notifikasi</span>
+    </div>
+
+    <!-- MAIN HEADER BAR -->
+    <header class="bg-gradient-to-r from-blue-900 via-blue-800 to-red-700 text-white shadow-xl border-b-4 border-yellow-400 py-3 px-6">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-yellow-400 flex items-center justify-center text-blue-900 font-black text-xl shadow-md">
+                    <i class="fas fa-map-marked-alt"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black tracking-wide text-yellow-300 drop-shadow">JELAJAH MALAYSIA</h1>
+                    <p class="text-xs text-blue-100 font-medium">Finger Gesture Educational Puzzle Game</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <button id="toggle-tracking-mode" onclick="toggleTrackingMode()" class="px-3 py-1.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-blue-950 font-bold text-xs md:text-sm flex items-center gap-2 shadow-md transition">
+                    <i class="fas fa-hand-pointer"></i>
+                    <span id="tracking-mode-text">Mod Kamera: Aktif</span>
+                </button>
+                <div class="text-right hidden sm:block">
+                    <span class="block text-xs text-yellow-300 font-bold">KEMENTERIAN PENDIDIKAN MALAYSIA</span>
+                    <span class="block text-[10px] text-slate-200">Pembelajaran Interaktif AI Computer Vision</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTAINER SECARA DINAMIK (PAGE VIEWS) -->
+    <main class="flex-grow flex items-center justify-center p-4 max-w-7xl w-full mx-auto relative z-10">
+        
+        <!-- ================= 1. HALAMAN UTAMA (HOME) ================= -->
+        <section id="page-home" class="w-full max-w-4xl glass-card rounded-3xl p-6 md:p-10 text-center relative overflow-hidden transition-all duration-500">
+            <div class="absolute -top-12 -right-12 w-40 h-40 bg-yellow-400 rounded-full opacity-20 blur-2xl"></div>
+            <div class="absolute -bottom-12 -left-12 w-40 h-40 bg-red-600 rounded-full opacity-20 blur-2xl"></div>
+
+            <span class="inline-block px-4 py-1.5 rounded-full bg-blue-100 text-blue-900 font-bold text-xs tracking-widest uppercase mb-4 shadow-sm border border-blue-200">
+                Edisi Geografi Sekolah Rendah & Menengah
+            </span>
+
+            <h2 class="text-3xl md:text-5xl font-black text-blue-950 mb-3 leading-tight">
+                JELAJAH MALAYSIA <br><span class="text-red-600 font-extrabold text-2xl md:text-4xl">FINGER GESTURE PUZZLE</span>
+            </h2>
+            <p class="text-slate-600 max-w-2xl mx-auto mb-8 text-sm md:text-base">
+                Kuasai kedudukan 13 buah negeri dan 3 wilayah persekutuan di Malaysia secara interaktif menggunakan pergerakan jemari melalui kawalan AI Webcam Kamera tanpa tetikus!
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                <button onclick="navigateTo('page-register')" class="group p-5 rounded-2xl bg-gradient-to-b from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-blue-950 font-black text-lg shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 flex flex-col items-center justify-center gap-2 border-2 border-yellow-200">
+                    <i class="fas fa-play-circle text-4xl group-hover:scale-110 transition"></i>
+                    <span>MULA PERMAINAN</span>
+                </button>
+                <button onclick="navigateTo('page-instructions')" class="group p-5 rounded-2xl bg-gradient-to-b from-blue-700 to-blue-900 hover:from-blue-600 hover:to-blue-800 text-white font-bold text-lg shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 flex flex-col items-center justify-center gap-2 border-2 border-blue-500">
+                    <i class="fas fa-book-open text-4xl text-yellow-300 group-hover:scale-110 transition"></i>
+                    <span>CARA BERMAIN</span>
+                </button>
+                <button onclick="navigateTo('page-leaderboard')" class="group p-5 rounded-2xl bg-gradient-to-b from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white font-bold text-lg shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 flex flex-col items-center justify-center gap-2 border-2 border-red-400">
+                    <i class="fas fa-trophy text-4xl text-yellow-300 group-hover:scale-110 transition"></i>
+                    <span>PAPAN KEDUDUKAN</span>
+                </button>
+            </div>
+
+            <div class="flex items-center justify-center gap-6 text-xs font-semibold text-slate-500 border-t border-slate-200 pt-4">
+                <span class="flex items-center gap-1.5"><i class="fas fa-camera text-blue-600"></i> Kamera Webcam</span>
+                <span class="flex items-center gap-1.5"><i class="fas fa-hand-pinch text-red-600"></i> Pinch Drag & Drop</span>
+                <span class="flex items-center gap-1.5"><i class="fas fa-cloud-upload-alt text-green-600"></i> Auto Sync Google Sheets</span>
+            </div>
+        </section>
+
+        <!-- ================= 2. HALAMAN PENDAFTARAN (REGISTER) ================= -->
+        <section id="page-register" class="w-full max-w-lg glass-card rounded-3xl p-6 md:p-8 text-center hidden transition-all duration-500">
+            <div class="w-16 h-16 bg-blue-900 text-yellow-400 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl shadow-md border-2 border-yellow-400">
+                <i class="fas fa-user-graduate"></i>
+            </div>
+            <h2 class="text-2xl md:text-3xl font-black text-blue-950 mb-1">BORANG PENDAFTARAN</h2>
+            <p class="text-xs text-slate-500 mb-6">Sila masukkan maklumat murid untuk merekod skor anda ke sistem.</p>
+
+            <form id="form-register" onsubmit="submitRegistration(event)" class="space-y-4 text-left">
+                <div>
+                    <label class="block text-xs font-bold text-blue-900 uppercase mb-1">Nama Pemain / Murid <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400"><i class="fas fa-user"></i></span>
+                        <input type="text" id="player-name" required placeholder="Contoh: Muhammad Amirul" class="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-300 focus:border-blue-700 focus:outline-none font-semibold text-slate-700 text-sm shadow-sm">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-blue-900 uppercase mb-1">Kelas / Tahun <span class="text-red-500">*</span></label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400"><i class="fas fa-school"></i></span>
+                        <input type="text" id="player-class" required placeholder="Contoh: 5 Cemerlang" class="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-300 focus:border-blue-700 focus:outline-none font-semibold text-slate-700 text-sm shadow-sm">
+                    </div>
+                </div>
+
+                <div class="pt-4 flex gap-3">
+                    <button type="button" onclick="navigateTo('page-home')" class="w-1/3 py-3 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-sm transition">
+                        Batal
+                    </button>
+                    <button type="submit" class="w-2/3 py-3 rounded-xl bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-blue-950 font-black text-sm shadow-md transition transform active:scale-95 flex items-center justify-center gap-2">
+                        <span>MULA LEVEL 1</span>
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- ================= 3. HALAMAN CARA BERMAIN (INSTRUCTIONS) ================= -->
+        <section id="page-instructions" class="w-full max-w-3xl glass-card rounded-3xl p-6 md:p-8 hidden transition-all duration-500">
+            <h2 class="text-2xl md:text-3xl font-black text-blue-950 mb-4 text-center flex items-center justify-center gap-3">
+                <i class="fas fa-hand-sparkles text-yellow-500"></i> PANDUAN ISYARAT JARI & PERMAINAN
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex items-start gap-3">
+                    <div class="text-3xl text-blue-700 font-bold">1</div>
+                    <div>
+                        <h4 class="font-bold text-blue-950 text-sm mb-1">Kursor Jari Telunjuk</h4>
+                        <p class="text-xs text-slate-600">Tunjukkan jari telunjuk ke arah kamera webcam. Titik penunjuk kuning akan mengikut pergerakan fizikal jari anda di skrin.</p>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-2xl bg-yellow-50 border border-yellow-200 flex items-start gap-3">
+                    <div class="text-3xl text-yellow-600 font-bold">2</div>
+                    <div>
+                        <h4 class="font-bold text-blue-950 text-sm mb-1">Isyarat Mencubit (Pinch Gesture)</h4>
+                        <p class="text-xs text-slate-600">Rapatkan ibu jari & jari telunjuk (Pinch) untuk memegang/memilih kad negeri. Lepaskan cubitan untuk Drop kad di lokasi peta.</p>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-2xl bg-red-50 border border-red-200 flex items-start gap-3">
+                    <div class="text-3xl text-red-600 font-bold">3</div>
+                    <div>
+                        <h4 class="font-bold text-blue-950 text-sm mb-1">Sistem Markah & Nyawa</h4>
+                        <p class="text-xs text-slate-600">Jawapan Betul = <strong class="text-green-600">+10 Markah</strong>. Jawapan Salah = <strong class="text-red-600">-1 Nyawa</strong>. Anda diberi 3 Nyawa asas.</p>
+                    </div>
+                </div>
+
+                <div class="p-4 rounded-2xl bg-green-50 border border-green-200 flex items-start gap-3">
+                    <div class="text-3xl text-green-600 font-bold">4</div>
+                    <div>
+                        <h4 class="font-bold text-blue-950 text-sm mb-1">Mod Kawalan Tetikus Alternatif</h4>
+                        <p class="text-xs text-slate-600">Sekiranya kamera tidak berfungsi atau tiada peranti kamera, tekan butang "Mod Kamera" di header untuk menukar ke tetikus.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center">
+                <button onclick="navigateTo('page-home')" class="px-8 py-3 rounded-xl bg-blue-900 text-yellow-400 font-bold text-sm shadow-md hover:bg-blue-800 transition">
+                    KEMBALI KE MENU UTAMA
+                </button>
+            </div>
+        </section>
+
+        <!-- ================= 4. HALAMAN UTAMA PERMAINAN (GAMEPLAY LEVEL 1) ================= -->
+        <section id="page-game" class="w-full hidden flex-col gap-3 transition-all duration-500">
+            
+            <!-- TOP DASHBOARD BAR -->
+            <div class="glass-card rounded-2xl p-3 md:p-4 flex flex-wrap justify-between items-center gap-3">
+                <!-- Info Pemain -->
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-blue-900 text-yellow-400 font-bold flex items-center justify-center border border-yellow-400 text-sm">
+                        <i class="fas fa-user font-bold"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span id="hud-player-name" class="font-black text-blue-950 text-sm md:text-base">Nama Pemain</span>
+                            <span id="hud-player-class" class="text-xs px-2 py-0.5 bg-blue-100 text-blue-800 font-bold rounded-full">Kelas</span>
+                        </div>
+                        <span class="text-xs text-slate-500 font-bold">LEVEL 1: MISTERI PETA MALAYSIA</span>
+                    </div>
+                </div>
+
+                <!-- HUD STATS (Skor, Nyawa, Masa) -->
+                <div class="flex items-center gap-4 md:gap-6 ml-auto">
+                    <!-- Nyawa -->
+                    <div class="text-center">
+                        <span class="block text-[10px] font-bold uppercase text-slate-400">NYAWA BAKI</span>
+                        <div id="hud-lives" class="flex gap-1 text-red-500 text-base md:text-lg">
+                            <i class="fas fa-heart"></i>
+                            <i class="fas fa-heart"></i>
+                            <i class="fas fa-heart"></i>
+                        </div>
+                    </div>
+
+                    <!-- Skor -->
+                    <div class="text-center px-3 py-1 bg-yellow-100 border border-yellow-300 rounded-xl">
+                        <span class="block text-[10px] font-bold uppercase text-yellow-800">SKOR</span>
+                        <div id="hud-score" class="font-black text-yellow-700 text-lg md:text-xl">0</div>
+                    </div>
+
+                    <!-- Pemasa -->
+                    <div class="text-center px-3 py-1 bg-blue-100 border border-blue-300 rounded-xl">
+                        <span class="block text-[10px] font-bold uppercase text-blue-800">MASA</span>
+                        <div id="hud-timer" class="font-black text-blue-900 text-lg md:text-xl">00:00</div>
+                    </div>
+
+                    <!-- Status Baki Soalan -->
+                    <div class="text-center hidden sm:block">
+                        <span class="block text-[10px] font-bold uppercase text-slate-400">PROGRESS</span>
+                        <span id="hud-progress" class="font-black text-slate-700 text-sm md:text-base">0 / 16</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MAIN PUZZLE WORKSPACE GRID -->
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-start">
+                
+                <!-- SIDEBAR KANAN / KIRI: KAD PUZZLE NEGERI (16 KAD) -->
+                <div class="lg:col-span-1 glass-card rounded-2xl p-3 flex flex-col h-[520px] max-h-[550px]">
+                    <div class="flex justify-between items-center mb-2 pb-2 border-b border-slate-200">
+                        <h3 class="font-black text-blue-950 text-sm flex items-center gap-2">
+                            <i class="fas fa-puzzle-piece text-yellow-500"></i> KAD NEGERI
+                        </h3>
+                        <span class="text-[10px] font-bold text-slate-400">Pilih & Drag Ke Peta</span>
+                    </div>
+                    
+                    <div id="cards-container" class="flex-grow overflow-y-auto space-y-2 pr-1">
+                        <!-- Card Items akan dijana melalui JS secara rawak -->
+                    </div>
+                </div>
+
+                <!-- KAWASAN PETA MALAYSIA (SVG VECTOR MAP 16 NEGERI / WILAYAH) -->
+                <div class="lg:col-span-2 glass-card rounded-2xl p-3 md:p-4 h-[520px] flex flex-col justify-between relative overflow-hidden bg-slate-900/90">
+                    <div class="flex justify-between items-center z-10">
+                        <span class="text-xs font-bold text-yellow-300 flex items-center gap-1.5 bg-blue-950/80 px-3 py-1 rounded-full border border-yellow-400/40">
+                            <i class="fas fa-map-marked"></i> SASARAN PETA MALAYSIA
+                        </span>
+                        <span id="drop-target-hint" class="text-xs text-slate-300 font-medium">Bawa kad ke lokasi negeri bersesuaian</span>
+                    </div>
+
+                    <!-- PETA VECTOR SVG SENSITIF DISKRESI GEOGRAFI -->
+                    <div class="relative w-full flex-grow flex items-center justify-center my-2 border border-slate-700/50 rounded-xl bg-gradient-to-b from-blue-950 to-slate-950 p-2 overflow-hidden">
+                        <svg id="malaysia-svg-map" viewBox="0 0 1000 500" class="w-full h-full max-h-[440px] drop-shadow-2xl">
+                            <!-- Semenanjung & Borneo Map Paths -->
+                            <!-- 1. PERLIS -->
+                            <path id="state-PERLIS" data-name="PERLIS" class="state-path" d="M 120,50 L 135,42 L 140,55 L 125,62 Z" />
+                            <text x="122" y="54" font-size="9" font-weight="bold" fill="#64748b" pointer-events="none">PLS</text>
+
+                            <!-- 2. KEDAH -->
+                            <path id="state-KEDAH" data-name="KEDAH" class="state-path" d="M 120,62 L 140,55 L 165,70 L 150,110 L 125,100 L 125,75 Z" />
+                            <text x="135" y="80" font-size="10" font-weight="bold" fill="#64748b" pointer-events="none">KDH</text>
+
+                            <!-- 3. PULAU PINANG -->
+                            <path id="state-PULAU PINANG" data-name="PULAU PINANG" class="state-path" d="M 112,98 L 123,98 L 123,112 L 112,112 Z" />
+                            <text x="110" y="108" font-size="8" font-weight="bold" fill="#64748b" pointer-events="none">PNG</text>
+
+                            <!-- 4. PERAK -->
+                            <path id="state-PERAK" data-name="PERAK" class="state-path" d="M 125,100 L 150,110 L 175,120 L 180,165 L 150,180 L 135,150 Z" />
+                            <text x="145" y="145" font-size="11" font-weight="bold" fill="#64748b" pointer-events="none">PRK</text>
+
+                            <!-- 5. KELANTAN -->
+                            <path id="state-KELANTAN" data-name="KELANTAN" class="state-path" d="M 165,70 L 210,90 L 215,145 L 175,135 L 165,70 Z" />
+                            <text x="180" y="110" font-size="11" font-weight="bold" fill="#64748b" pointer-events="none">KTN</text>
+
+                            <!-- 6. TERENGGANU -->
+                            <path id="state-TERENGGANU" data-name="TERENGGANU" class="state-path" d="M 210,90 L 250,115 L 245,170 L 215,145 Z" />
+                            <text x="220" y="130" font-size="10" font-weight="bold" fill="#64748b" pointer-events="none">TRG</text>
+
+                            <!-- 7. PAHANG -->
+                            <path id="state-PAHANG" data-name="PAHANG" class="state-path" d="M 180,165 L 215,145 L 245,170 L 255,225 L 195,235 L 175,190 Z" />
+                            <text x="205" y="195" font-size="13" font-weight="bold" fill="#64748b" pointer-events="none">PHG</text>
+
+                            <!-- 8. SELANGOR -->
+                            <path id="state-SELANGOR" data-name="SELANGOR" class="state-path" d="M 150,180 L 180,190 L 185,225 L 155,220 Z" />
+                            <text x="156" y="202" font-size="10" font-weight="bold" fill="#64748b" pointer-events="none">SGR</text>
+
+                            <!-- 14. KUALA LUMPUR -->
+                            <path id="state-KUALA LUMPUR" data-name="KUALA LUMPUR" class="state-path" d="M 170,200 L 178,200 L 178,208 L 170,208 Z" fill="#f87171" />
+                            <text x="165" y="198" font-size="7" font-weight="bold" fill="#e11d48" pointer-events="none">KL</text>
+
+                            <!-- 15. PUTRAJAYA -->
+                            <path id="state-PUTRAJAYA" data-name="PUTRAJAYA" class="state-path" d="M 172,212 L 178,212 L 178,218 L 172,218 Z" fill="#fb923c" />
+
+                            <!-- 9. NEGERI SEMBILAN -->
+                            <path id="state-NEGERI SEMBILAN" data-name="NEGERI SEMBILAN" class="state-path" d="M 175,225 L 205,228 L 200,250 L 170,242 Z" />
+                            <text x="175" y="238" font-size="9" font-weight="bold" fill="#64748b" pointer-events="none">NSN</text>
+
+                            <!-- 10. MELAKA -->
+                            <path id="state-MELAKA" data-name="MELAKA" class="state-path" d="M 185,250 L 202,252 L 195,265 L 180,260 Z" />
+                            <text x="183" y="260" font-size="8" font-weight="bold" fill="#64748b" pointer-events="none">MLK</text>
+
+                            <!-- 11. JOHOR -->
+                            <path id="state-JOHOR" data-name="JOHOR" class="state-path" d="M 200,240 L 255,225 L 265,275 L 220,300 L 195,265 Z" />
+                            <text x="220" y="268" font-size="13" font-weight="bold" fill="#64748b" pointer-events="none">JHR</text>
+
+                            <!-- LABUAN ISLAND (OFF SHORE SABAH) -->
+                            <!-- 16. LABUAN -->
+                            <circle id="state-LABUAN" data-name="LABUAN" class="state-path" cx="640" cy="155" r="8" />
+                            <text x="630" y="142" font-size="8" font-weight="bold" fill="#38bdf8" pointer-events="none">LBN</text>
+
+                            <!-- 13. SARAWAK -->
+                            <path id="state-SARAWAK" data-name="SARAWAK" class="state-path" d="M 430,340 L 480,270 L 550,240 L 630,190 L 650,225 L 590,265 L 520,345 L 440,365 Z" />
+                            <text x="510" y="300" font-size="16" font-weight="bold" fill="#64748b" pointer-events="none">SARAWAK</text>
+
+                            <!-- 12. SABAH -->
+                            <path id="state-SABAH" data-name="SABAH" class="state-path" d="M 630,190 L 670,130 L 750,120 L 790,165 L 730,220 L 650,225 Z" />
+                            <text x="700" y="175" font-size="16" font-weight="bold" fill="#64748b" pointer-events="none">SABAH</text>
+                        </svg>
+
+                        <!-- GESTURE PINCH ANIMATION EFFECT OVERLAY -->
+                        <div id="drop-effect" class="absolute pointer-events-none opacity-0 transition-all duration-300 transform scale-50 font-black text-2xl text-yellow-300">
+                            +10 MARKAH!
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center text-[11px] text-slate-400 z-10">
+                        <span><i class="fas fa-info-circle text-yellow-400"></i> Padankan kesemua 16 buah lokasi untuk menamatkan level.</span>
+                        <span class="text-yellow-400 font-bold">Laut China Selatan</span>
+                    </div>
+                </div>
+
+                <!-- SIDEBAR KANAN: WEBCAM TRACKING DISPLAY & GESTURE STATUS -->
+                <div class="lg:col-span-1 glass-card rounded-2xl p-3 flex flex-col h-[520px] justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-2 pb-1 border-b border-slate-200">
+                            <h3 class="font-black text-blue-950 text-sm flex items-center gap-2">
+                                <i class="fas fa-video text-red-600"></i> PAPARAN WEBCAM
+                            </h3>
+                            <span id="camera-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700">Aktif</span>
+                        </div>
+
+                        <!-- LIVE WEBCAM VIDEO & CANVAS OVERLAY CONTAINER -->
+                        <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border-2 border-slate-700 shadow-inner">
+                            <video id="webcam-video" class="w-full h-full object-cover transform -scale-x-100" playsinline></video>
+                            <canvas id="webcam-canvas" class="absolute top-0 left-0 w-full h-full transform -scale-x-100"></canvas>
+                            
+                            <div id="webcam-fallback-msg" class="absolute inset-0 bg-slate-900/90 text-white p-3 text-center flex-col items-center justify-center hidden">
+                                <i class="fas fa-video-slash text-2xl text-red-500 mb-1"></i>
+                                <p class="text-xs font-bold">Kamera Tidak Berfungsi / Ditolak</p>
+                                <p class="text-[10px] text-slate-400 mt-1">Menggunakan mod kawalan tetikus sebagai alternatif.</p>
+                            </div>
+                        </div>
+
+                        <!-- GESTURE STATE INDICATOR -->
+                        <div class="mt-3 p-3 bg-slate-100 rounded-xl border border-slate-200">
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase">Status Pergerakan Jari</span>
+                            <div class="flex items-center justify-between mt-1">
+                                <span id="gesture-state-text" class="font-bold text-xs text-blue-900">Menunggu Tangan...</span>
+                                <div id="gesture-indicator-dot" class="w-3 h-3 rounded-full bg-slate-400"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONTROL BUTTONS -->
+                    <div class="space-y-2 pt-2 border-t border-slate-200">
+                        <button onclick="resetCurrentGame()" class="w-full py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-2">
+                            <i class="fas fa-redo"></i> MAIN SEMULA LEVEL
+                        </button>
+                        <button onclick="confirmExitGame()" class="w-full py-2.5 rounded-xl bg-red-100 hover:bg-red-200 text-red-700 font-bold text-xs transition flex items-center justify-center gap-2">
+                            <i class="fas fa-sign-out-alt"></i> KEMBALI KE MENU
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ================= 5. HALAMAN TAMAT PERMAINAN (GAME OVER / VICTORY) ================= -->
+        <section id="page-gameover" class="w-full max-w-lg glass-card rounded-3xl p-6 md:p-8 text-center hidden transition-all duration-500">
+            <div id="end-status-icon" class="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 text-4xl shadow-xl animate-bounce">
+                <!-- Dynamic Icon -->
+            </div>
+            
+            <h2 id="end-title" class="text-3xl font-black mb-1">TAHNIAH!</h2>
+            <p id="end-subtitle" class="text-xs text-slate-600 mb-6">Anda telah berjaya menyelesaikan Jelajah Malaysia!</p>
+
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="p-3 bg-yellow-50 border border-yellow-200 rounded-2xl">
+                    <span class="block text-[10px] font-bold text-yellow-800 uppercase">Jumlah Skor</span>
+                    <span id="end-final-score" class="font-black text-2xl text-yellow-600">160</span>
+                </div>
+                <div class="p-3 bg-blue-50 border border-blue-200 rounded-2xl">
+                    <span class="block text-[10px] font-bold text-blue-800 uppercase">Masa Permainan</span>
+                    <span id="end-final-time" class="font-black text-2xl text-blue-900">01:45</span>
+                </div>
+                <div class="p-3 bg-red-50 border border-red-200 rounded-2xl">
+                    <span class="block text-[10px] font-bold text-red-800 uppercase">Baki Nyawa</span>
+                    <span id="end-final-lives" class="font-black text-2xl text-red-600">3 / 3</span>
+                </div>
+                <div class="p-3 bg-green-50 border border-green-200 rounded-2xl">
+                    <span class="block text-[10px] font-bold text-green-800 uppercase">Status Rekod</span>
+                    <span id="end-sync-status" class="font-bold text-xs text-green-700 mt-2 block">Tersimpan di Sheet</span>
+                </div>
+            </div>
+
+            <div class="flex gap-3">
+                <button onclick="navigateTo('page-leaderboard')" class="w-1/2 py-3 rounded-xl bg-blue-900 hover:bg-blue-800 text-yellow-400 font-bold text-sm shadow-md transition flex items-center justify-center gap-2">
+                    <i class="fas fa-list-ol"></i> LEADERBOARD
+                </button>
+                <button onclick="restartGameFromEnd()" class="w-1/2 py-3 rounded-xl bg-gradient-to-r from-yellow-400 to-yellow-500 hover:from-yellow-300 hover:to-yellow-400 text-blue-950 font-black text-sm shadow-md transition flex items-center justify-center gap-2">
+                    <i class="fas fa-play"></i> MAIN LAGI
+                </button>
+            </div>
+        </section>
+
+        <!-- ================= 6. HALAMAN LEADERBOARD (PAPAN KEDUDUKAN) ================= -->
+        <section id="page-leaderboard" class="w-full max-w-4xl glass-card rounded-3xl p-6 md:p-8 hidden transition-all duration-500">
+            <div class="flex justify-between items-center mb-6 pb-3 border-b border-slate-200">
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-black text-blue-950 flex items-center gap-2">
+                        <i class="fas fa-trophy text-yellow-500"></i> PAPAN KEDUDUKAN PEMAIN
+                    </h2>
+                    <p class="text-xs text-slate-500">Rekod markah tertinggi murid tersimpan secara terus di Google Sheets.</p>
+                </div>
+                <button onclick="loadLeaderboardData()" class="px-3 py-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-900 font-bold text-xs transition flex items-center gap-1.5">
+                    <i class="fas fa-sync-alt"></i> Muat Semula
+                </button>
+            </div>
+
+            <!-- TABLE CONTAINER -->
+            <div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white mb-6 max-h-[360px] overflow-y-auto">
+                <table class="w-full text-left text-xs md:text-sm">
+                    <thead class="bg-blue-900 text-yellow-300 font-bold sticky top-0">
+                        <tr>
+                            <th class="p-3 text-center">Ked.</th>
+                            <th class="p-3">Nama Pemain</th>
+                            <th class="p-3">Kelas</th>
+                            <th class="p-3 text-center">Level</th>
+                            <th class="p-3 text-center">Skor</th>
+                            <th class="p-3 text-center">Masa</th>
+                            <th class="p-3 text-center">Nyawa</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboard-tbody" class="divide-y divide-slate-100 text-slate-700">
+                        <!-- Dynamic Leaderboard Data rows -->
+                        <tr>
+                            <td colspan="7" class="p-8 text-center text-slate-400 font-medium">
+                                <i class="fas fa-spinner fa-spin text-2xl mb-2 text-blue-900 block"></i>
+                                Memuatkan data leaderboard dari Google Sheets...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="text-center">
+                <button onclick="navigateTo('page-home')" class="px-8 py-3 rounded-xl bg-blue-900 text-yellow-400 font-bold text-sm shadow-md hover:bg-blue-800 transition">
+                    KEMBALI KE MENU UTAMA
+                </button>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="bg-blue-950 text-slate-400 text-center text-xs py-3 border-t border-slate-800 relative z-10">
+        <p>© 2026 Projek Pembangunan Permainan Interaktif – Jelajah Malaysia Finger Gesture Puzzle</p>
+    </footer>
+
+    <!-- LOGIK JAVASCRIPT & MEDIAPIPE TRACKING INTEGRATION -->
+    <script>
+        /* ==========================================================================
+           1. GAME DATA CONFIGURATION & STATE MANAGEMENT
+           ========================================================================== */
+        const MALAYSIA_STATES = [
+            { id: 'PERLIS', name: 'PERLIS', region: 'Semenanjung' },
+            { id: 'KEDAH', name: 'KEDAH', region: 'Semenanjung' },
+            { id: 'PULAU PINANG', name: 'PULAU PINANG', region: 'Semenanjung' },
+            { id: 'PERAK', name: 'PERAK', region: 'Semenanjung' },
+            { id: 'KELANTAN', name: 'KELANTAN', region: 'Semenanjung' },
+            { id: 'TERENGGANU', name: 'TERENGGANU', region: 'Semenanjung' },
+            { id: 'PAHANG', name: 'PAHANG', region: 'Semenanjung' },
+            { id: 'SELANGOR', name: 'SELANGOR', region: 'Semenanjung' },
+            { id: 'NEGERI SEMBILAN', name: 'NEGERI SEMBILAN', region: 'Semenanjung' },
+            { id: 'MELAKA', name: 'MELAKA', region: 'Semenanjung' },
+            { id: 'JOHOR', name: 'JOHOR', region: 'Semenanjung' },
+            { id: 'SABAH', name: 'SABAH', region: 'Malaysia Timur' },
+            { id: 'SARAWAK', name: 'SARAWAK', region: 'Malaysia Timur' },
+            { id: 'KUALA LUMPUR', name: 'KUALA LUMPUR', region: 'Wilayah Persekutuan' },
+            { id: 'PUTRAJAYA', name: 'PUTRAJAYA', region: 'Wilayah Persekutuan' },
+            { id: 'LABUAN', name: 'LABUAN', region: 'Wilayah Persekutuan' }
+        ];
+
+        // Global Game State
+        let gameState = {
+            player: { name: '', class: '' },
+            level: 1,
+            score: 0,
+            lives: 3,
+            matchedCount: 0,
+            remainingCount: 16,
+            timerSeconds: 0,
+            timerInterval: null,
+            selectedCardId: null,
+            isGameActive: false,
+            trackingMode: 'camera' // 'camera' or 'mouse'
+        };
+
+        // Hand Gesture Tracking State
+        let handTracking = {
+            cursorX: 0,
+            cursorY: 0,
+            isPinched: false,
+            previousPinchState: false,
+            camera: null,
+            hands: null
+        };
+
+        /* ==========================================================================
+           2. NAVIGATION & SCREEN MANAGER
+           ========================================================================== */
+        function navigateTo(pageId) {
+            const pages = ['page-home', 'page-register', 'page-instructions', 'page-game', 'page-gameover', 'page-leaderboard'];
+            pages.forEach(p => {
+                const el = document.getElementById(p);
+                if (p === pageId) {
+                    el.classList.remove('hidden');
+                    el.classList.add('flex');
+                } else {
+                    el.classList.add('hidden');
+                    el.classList.remove('flex');
+                }
+            });
+
+            if (pageId === 'page-leaderboard') {
+                loadLeaderboardData();
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-message');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMsg.innerText = message;
+            
+            if (type === 'success') {
+                toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-white font-bold text-lg shadow-2xl transition-all duration-300 opacity-100 bg-green-600 flex items-center gap-3 translate-y-0';
+                toastIcon.className = 'fas fa-check-circle text-2xl';
+            } else if (type === 'error') {
+                toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-white font-bold text-lg shadow-2xl transition-all duration-300 opacity-100 bg-red-600 flex items-center gap-3 translate-y-0';
+                toastIcon.className = 'fas fa-times-circle text-2xl';
+            } else {
+                toast.className = 'fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-white font-bold text-lg shadow-2xl transition-all duration-300 opacity-100 bg-blue-600 flex items-center gap-3 translate-y-0';
+                toastIcon.className = 'fas fa-info-circle text-2xl';
+            }
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', '-translate-y-10');
+            }, 2500);
+        }
+
+        /* ==========================================================================
+           3. GAME INIT & LOGIC SYSTEM
+           ========================================================================== */
+        function submitRegistration(event) {
+            event.preventDefault();
+            const nameInput = document.getElementById('player-name').value.trim();
+            const classInput = document.getElementById('player-class').value.trim();
+
+            if (!nameInput || !classInput) {
+                showToast('Sila lengkapkan Nama dan Kelas!', 'error');
+                return;
+            }
+
+            gameState.player.name = nameInput;
+            gameState.player.class = classInput;
+
+            document.getElementById('hud-player-name').innerText = nameInput;
+            document.getElementById('hud-player-class').innerText = classInput;
+
+            startLevel1();
+        }
+
+        function startLevel1() {
+            gameState.score = 0;
+            gameState.lives = 3;
+            gameState.matchedCount = 0;
+            gameState.remainingCount = 16;
+            gameState.timerSeconds = 0;
+            gameState.selectedCardId = null;
+            gameState.isGameActive = true;
+
+            updateHUD();
+            renderPuzzleCards();
+            resetMapState();
+            startTimer();
+
+            navigateTo('page-game');
+            showToast('Level 1 Bermula! Suai padan kad negeri ke peta.', 'info');
+        }
+
+        function renderPuzzleCards() {
+            const container = document.getElementById('cards-container');
+            container.innerHTML = '';
+
+            // Shuffle Cards Randomly
+            const shuffled = [...MALAYSIA_STATES].sort(() => Math.random() - 0.5);
+
+            shuffled.forEach(state => {
+                const card = document.createElement('div');
+                card.id = `card-${state.id}`;
+                card.dataset.stateId = state.id;
+                card.className = 'puzzle-card p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 font-bold text-sm text-blue-950';
+                card.innerHTML = `
+                    <span class="flex items-center gap-2">
+                        <i class="fas fa-map-pin text-red-500"></i> ${state.name}
+                    </span>
+                    <i class="fas fa-hand-pointer text-slate-300 text-xs"></i>
+                `;
+
+                // Mouse click handler (for alternative mode)
+                card.addEventListener('click', () => selectPuzzleCard(state.id));
+                container.appendChild(card);
+            });
+        }
+
+        function resetMapState() {
+            document.querySelectorAll('.state-path').forEach(path => {
+                path.classList.remove('matched', 'gesture-hover');
+            });
+        }
+
+        function selectPuzzleCard(stateId) {
+            if (!gameState.isGameActive) return;
+
+            // Clear previous selection
+            document.querySelectorAll('.puzzle-card').forEach(c => c.classList.remove('selected'));
+
+            const card = document.getElementById(`card-${stateId}`);
+            if (card && !card.classList.contains('placed')) {
+                gameState.selectedCardId = stateId;
+                card.classList.add('selected');
+                showToast(`Kad ${stateId} dipilih. Bawa ke peta!`, 'info');
+            }
+        }
+
+        function checkAnswerPlacement(targetStateId) {
+            if (!gameState.selectedCardId || !gameState.isGameActive) return;
+
+            const selectedCard = document.getElementById(`card-${gameState.selectedCardId}`);
+            const statePath = document.getElementById(`state-${targetStateId}`);
+
+            if (gameState.selectedCardId === targetStateId) {
+                // CORICAL MATCH (BETUL)
+                gameState.score += 10;
+                gameState.matchedCount += 1;
+                gameState.remainingCount -= 1;
+
+                selectedCard.classList.remove('selected');
+                selectedCard.classList.add('placed');
+                if (statePath) statePath.classList.add('matched');
+
+                showDropAnimation(true);
+                showToast(`BETUL! ${targetStateId} (+10 Markah)`, 'success');
+                gameState.selectedCardId = null;
+
+                updateHUD();
+
+                // Check Victory
+                if (gameState.matchedCount === 16) {
+                    endGame(true);
+                }
+            } else {
+                // INCORRECT MATCH (SALAH)
+                gameState.lives -= 1;
+                showDropAnimation(false);
+                showToast(`SALAH! Itu kedudukan ${targetStateId}. (-1 Nyawa)`, 'error');
+
+                updateHUD();
+
+                // Check Defeat
+                if (gameState.lives <= 0) {
+                    endGame(false);
+                }
+            }
+        }
+
+        function showDropAnimation(isCorrect) {
+            const effect = document.getElementById('drop-effect');
+            effect.innerText = isCorrect ? '+10 MARKAH!' : 'CUBA LAGI!';
+            effect.className = `absolute pointer-events-none transition-all duration-300 font-black text-xl opacity-100 scale-110 ${isCorrect ? 'text-green-400' : 'text-red-500'}`;
+            
+            setTimeout(() => {
+                effect.classList.add('opacity-0', 'scale-50');
+            }, 800);
+        }
+
+        function updateHUD() {
+            document.getElementById('hud-score').innerText = gameState.score;
+            document.getElementById('hud-progress').innerText = `${gameState.matchedCount} / 16`;
+
+            // Update Hearts
+            const livesContainer = document.getElementById('hud-lives');
+            livesContainer.innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                if (i < gameState.lives) {
+                    livesContainer.innerHTML += '<i class="fas fa-heart text-red-500"></i>';
+                } else {
+                    livesContainer.innerHTML += '<i class="far fa-heart text-slate-400"></i>';
+                }
+            }
+        }
+
+        function startTimer() {
+            clearInterval(gameState.timerInterval);
+            gameState.timerSeconds = 0;
+            gameState.timerInterval = setInterval(() => {
+                gameState.timerSeconds++;
+                const mins = String(Math.floor(gameState.timerSeconds / 60)).padStart(2, '0');
+                const secs = String(gameState.timerSeconds % 60).padStart(2, '0');
+                document.getElementById('hud-timer').innerText = `${mins}:${secs}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(gameState.timerInterval);
+        }
+
+        /* ==========================================================================
+           4. GAME END & GOOGLE SHEETS INTEGRATION
+           ========================================================================== */
+        function endGame(isVictory) {
+            gameState.isGameActive = false;
+            stopTimer();
+
+            const mins = String(Math.floor(gameState.timerSeconds / 60)).padStart(2, '0');
+            const secs = String(gameState.timerSeconds % 60).padStart(2, '0');
+            const timeFormatted = `${mins}:${secs}`;
+
+            document.getElementById('end-final-score').innerText = gameState.score;
+            document.getElementById('end-final-time').innerText = timeFormatted;
+            document.getElementById('end-final-lives').innerText = `${gameState.lives} / 3`;
+
+            const iconContainer = document.getElementById('end-status-icon');
+            const titleEl = document.getElementById('end-title');
+            const subTitleEl = document.getElementById('end-subtitle');
+
+            if (isVictory) {
+                iconContainer.className = 'w-20 h-20 rounded-full bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-4 text-4xl shadow-xl border-4 border-green-400';
+                iconContainer.innerHTML = '<i class="fas fa-trophy"></i>';
+                titleEl.innerText = 'TAHNIAH! ANDA MENANG!';
+                titleEl.className = 'text-3xl font-black text-green-700 mb-1';
+                subTitleEl.innerText = 'Semua 16 lokasi negeri & wilayah berjaya dipadankan!';
+            } else {
+                iconContainer.className = 'w-20 h-20 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4 text-4xl shadow-xl border-4 border-red-400';
+                iconContainer.innerHTML = '<i class="fas fa-heart-broken"></i>';
+                titleEl.innerText = 'GAME OVER!';
+                titleEl.className = 'text-3xl font-black text-red-600 mb-1';
+                subTitleEl.innerText = 'Nyawa anda telah habis. Sila cuba lagi!';
+            }
+
+            navigateTo('page-gameover');
+
+            // Send record to backend Google Sheets
+            saveRecordToGoogleSheets(isVictory ? 'MENANG' : 'KALAH', timeFormatted);
+        }
+
+        function saveRecordToGoogleSheets(status, formattedTime) {
+            const syncBadge = document.getElementById('end-sync-status');
+            syncBadge.innerText = 'Menghantar rekod ke Sheet...';
+            syncBadge.className = 'font-bold text-xs text-yellow-600 mt-2 block';
+
+            const payload = {
+                playerName: gameState.player.name,
+                playerClass: gameState.player.class,
+                level: 'LEVEL 1',
+                score: gameState.score,
+                duration: formattedTime,
+                remainingLives: gameState.lives,
+                status: status
+            };
+
+            // Check if google.script.run is available (inside GAS Web App environment)
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(res => {
+                        syncBadge.innerText = 'Rekod Diberjaya Disimpan!';
+                        syncBadge.className = 'font-bold text-xs text-green-700 mt-2 block';
+                    })
+                    .withFailureHandler(err => {
+                        syncBadge.innerText = 'Simpanan Tempatan (Luar Talian)';
+                        syncBadge.className = 'font-bold text-xs text-slate-500 mt-2 block';
+                    })
+                    .simpanRekodPemain(payload);
+            } else {
+                // Mock Fallback for local testing outside GAS
+                setTimeout(() => {
+                    syncBadge.innerText = 'Simpanan Mod Ujian (Local Mock)';
+                    syncBadge.className = 'font-bold text-xs text-blue-700 mt-2 block';
+                }, 1000);
+            }
+        }
+
+        function loadLeaderboardData() {
+            const tbody = document.getElementById('leaderboard-tbody');
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-8 text-center text-slate-400 font-medium">
+                        <i class="fas fa-spinner fa-spin text-2xl mb-2 text-blue-900 block"></i>
+                        Memuatkan data leaderboard dari Google Sheets...
+                    </td>
+                </tr>
+            `;
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(data => {
+                        renderLeaderboardTable(data);
+                    })
+                    .withFailureHandler(err => {
+                        tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-red-500">Gagal memuatkan data dari Google Sheets.</td></tr>`;
+                    })
+                    .bacaLeaderboard();
+            } else {
+                // Mock Data for direct browser preview
+                setTimeout(() => {
+                    const mockData = [
+                        { rank: 1, playerName: 'Ahmad Daniel', playerClass: '5 Cemerlang', level: 'LEVEL 1', score: 160, duration: '01:20', remainingLives: 3 },
+                        { rank: 2, playerName: 'Siti Nur Aishah', playerClass: '5 Pintar', level: 'LEVEL 1', score: 160, duration: '01:45', remainingLives: 3 },
+                        { rank: 3, playerName: 'Muhammad Rayyan', playerClass: '4 Bijak', level: 'LEVEL 1', score: 140, duration: '02:10', remainingLives: 2 }
+                    ];
+                    renderLeaderboardTable(mockData);
+                }, 800);
+            }
+        }
+
+        function renderLeaderboardTable(data) {
+            const tbody = document.getElementById('leaderboard-tbody');
+            tbody.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400">Tiada rekod pemain lagi.</td></tr>`;
+                return;
+            }
+
+            data.forEach((item, index) => {
+                const tr = document.createElement('tr');
+                tr.className = index % 2 === 0 ? 'bg-slate-50' : 'bg-white';
+                tr.innerHTML = `
+                    <td class="p-3 text-center font-black ${index === 0 ? 'text-yellow-500 text-base' : 'text-slate-600'}">${index + 1}</td>
+                    <td class="p-3 font-bold text-blue-950">${item.playerName}</td>
+                    <td class="p-3 text-slate-600">${item.playerClass}</td>
+                    <td class="p-3 text-center"><span class="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full font-bold text-[10px]">${item.level}</span></td>
+                    <td class="p-3 text-center font-black text-yellow-600">${item.score}</td>
+                    <td class="p-3 text-center font-mono">${item.duration}</td>
+                    <td class="p-3 text-center text-red-500 font-bold">${item.remainingLives} ❤️</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function resetCurrentGame() {
+            if (confirm('Adakah anda pasti mahu semula level ini?')) {
+                startLevel1();
+            }
+        }
+
+        function confirmExitGame() {
+            if (confirm('Adakah anda pasti mahu keluar ke menu utama? Progress semasa akan hilang.')) {
+                stopTimer();
+                gameState.isGameActive = false;
+                navigateTo('page-home');
+            }
+        }
+
+        function restartGameFromEnd() {
+            startLevel1();
+        }
+
+        /* ==========================================================================
+           5. MEDIAPIPE HAND TRACKING & FINGER GESTURE CONTROL ENGINE
+           ========================================================================== */
+        function initMediaPipeHands() {
+            const videoElement = document.getElementById('webcam-video');
+            const canvasElement = document.getElementById('webcam-canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+            const cursorOverlay = document.getElementById('hand-cursor');
+            const indicatorDot = document.getElementById('gesture-indicator-dot');
+            const gestureStateText = document.getElementById('gesture-state-text');
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
+            hands.onResults((results) => {
+                // Resize Canvas Overlay to Match Video
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+
+                    // Draw skeleton on camera display
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#ffcc00', lineWidth: 2 });
+                    drawLandmarks(canvasCtx, landmarks, { color: '#cc0000', lineWidth: 1, radius: 3 });
+
+                    // LANDMARK 8: Index Finger Tip | LANDMARK 4: Thumb Tip
+                    const indexTip = landmarks[8];
+                    const thumbTip = landmarks[4];
+
+                    // Calculate screen position (Mirror Horizontal flip due to camera transform)
+                    const screenX = (1 - indexTip.x) * window.innerWidth;
+                    const screenY = indexTip.y * window.innerHeight;
+
+                    // Update Hand Cursor Position
+                    cursorOverlay.style.left = `${screenX}px`;
+                    cursorOverlay.style.top = `${screenY}px`;
+                    cursorOverlay.classList.remove('hidden');
+
+                    handTracking.cursorX = screenX;
+                    handTracking.cursorY = screenY;
+
+                    // Calculate Euclidean Distance between Thumb and Index Tip (Pinch Detection)
+                    const distance = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+
+                    // Pinch Threshold (typically < 0.08)
+                    const isPinchNow = distance < 0.08;
+
+                    if (isPinchNow) {
+                        cursorOverlay.classList.add('pinched');
+                        indicatorDot.className = 'w-3 h-3 rounded-full bg-red-600 animate-ping';
+                        gestureStateText.innerText = 'GERAKAN: MENCUBIT (PINCH)';
+                    } else {
+                        cursorOverlay.classList.remove('pinched');
+                        indicatorDot.className = 'w-3 h-3 rounded-full bg-green-500';
+                        gestureStateText.innerText = 'GERAKAN: KURSOR PENUNJUK';
+                    }
+
+                    // TRIGGER VIRTUAL INTERACTION EVENTS ON DOM
+                    handleGestureInteraction(screenX, screenY, isPinchNow);
+                } else {
+                    cursorOverlay.classList.add('hidden');
+                    indicatorDot.className = 'w-3 h-3 rounded-full bg-slate-400';
+                    gestureStateText.innerText = 'Menunggu Tangan...';
+                }
+                canvasCtx.restore();
+            });
+
+            // Start Camera Stream
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    if (gameState.trackingMode === 'camera') {
+                        await hands.send({ image: videoElement });
+                    }
+                },
+                width: 640,
+                height: 480
+            });
+
+            camera.start().then(() => {
+                document.getElementById('camera-status-badge').innerText = 'Aktif';
+            }).catch(err => {
+                console.warn('Webcam Access Failed:', err);
+                document.getElementById('webcam-fallback-msg').classList.remove('hidden');
+                document.getElementById('camera-status-badge').innerText = 'Mod Tetikus';
+                document.getElementById('camera-status-badge').className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-100 text-yellow-700';
+                gameState.trackingMode = 'mouse';
+                document.getElementById('tracking-mode-text').innerText = 'Mod Kamera: Tetikus';
+            });
+        }
+
+        /* ==========================================================================
+           6. HAND INTERACTION DETECTOR (VIRTUAL PINCH DRAG & DROP)
+           ========================================================================== */
+        function handleGestureInteraction(x, y, isPinched) {
+            if (!gameState.isGameActive) return;
+
+            // Find DOM element under fingertip
+            const elementUnderFinger = document.elementFromPoint(x, y);
+
+            if (!elementUnderFinger) return;
+
+            // 1. PINCH START GESTURE (TRIGGER SELECT CARD)
+            if (isPinched && !handTracking.previousPinchState) {
+                const puzzleCard = elementUnderFinger.closest('.puzzle-card');
+                if (puzzleCard) {
+                    const stateId = puzzleCard.dataset.stateId;
+                    selectPuzzleCard(stateId);
+                }
+            }
+
+            // 2. HOVER EFFECT OVER SVG MAP PATHS
+            document.querySelectorAll('.state-path').forEach(path => path.classList.remove('gesture-hover'));
+            const mapPath = elementUnderFinger.closest('.state-path');
+            if (mapPath) {
+                mapPath.classList.add('gesture-hover');
+            }
+
+            // 3. PINCH RELEASE GESTURE (TRIGGER DROP ON MAP)
+            if (!isPinched && handTracking.previousPinchState) {
+                if (mapPath && gameState.selectedCardId) {
+                    const targetStateId = mapPath.dataset.name;
+                    checkAnswerPlacement(targetStateId);
+                }
+            }
+
+            handTracking.previousPinchState = isPinched;
+        }
+
+        function toggleTrackingMode() {
+            if (gameState.trackingMode === 'camera') {
+                gameState.trackingMode = 'mouse';
+                document.getElementById('tracking-mode-text').innerText = 'Mod Kamera: Tetikus';
+                document.getElementById('hand-cursor').classList.add('hidden');
+                showToast('Ditukar ke kawalan Tetikus', 'info');
+            } else {
+                gameState.trackingMode = 'camera';
+                document.getElementById('tracking-mode-text').innerText = 'Mod Kamera: Aktif';
+                showToast('Ditukar ke kawalan Webcam Kamera', 'info');
+            }
+        }
+
+        // SVG Path Click Handler for Mouse alternative mode
+        document.querySelectorAll('.state-path').forEach(path => {
+            path.addEventListener('click', (e) => {
+                const targetStateId = e.target.dataset.name;
+                checkAnswerPlacement(targetStateId);
+            });
+        });
+
+        /* ==========================================================================
+           7. PAGE INIT LOAD
+           ========================================================================== */
+        window.onload = function() {
+            initMediaPipeHands();
+        };
+    </script>
+</body>
+</html>
